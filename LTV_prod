@@ -1,0 +1,797 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/danielraz3/hello-world/blob/master/LTV_prod\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 46,
+      "metadata": {
+        "cellView": "form",
+        "id": "w6MmeBUBJ-9E"
+      },
+      "outputs": [],
+      "source": [
+        "# @title Setup\n",
+        "from google.colab import auth\n",
+        "from google.cloud import bigquery\n",
+        "from google.colab import data_table\n",
+        "\n",
+        "project = 'panoply-c8c-4908bf4d5f07' # Project ID inserted based on the query results selected to explore\n",
+        "location = 'US' # Location inserted based on the query results selected to explore\n",
+        "client = bigquery.Client(project=project, location=location)\n",
+        "data_table.enable_dataframe_formatter()\n",
+        "auth.authenticate_user()"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "pj42soltXW_H"
+      },
+      "source": [
+        "## Reference SQL syntax from the original job\n",
+        "Use the ```jobs.query```\n",
+        "[method](https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs/query) to\n",
+        "return the SQL syntax from the job. This can be copied from the output cell\n",
+        "below to edit the query now or in the future. Alternatively, you can use\n",
+        "[this link](https://console.cloud.google.com/bigquery?j=panoply-c8c-4908bf4d5f07:US:bquxjob_426efa91_185772b342e)\n",
+        "back to BigQuery to edit the query within the BigQuery user interface."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 47,
+      "metadata": {
+        "id": "KxSqPfAeXW_K",
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "outputId": "c986e66a-6e51-4949-8208-c13ee210c632"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "with daily_playtime as(\n",
+            "  select user_id,date,sum(session_elapsed_time)/60000 playtime_min\n",
+            "  from `panoply-c8c-4908bf4d5f07.ak_agg_tables.sessions`\n",
+            "  where date >= '2022-05-01'\n",
+            "  group by 1,2),\n",
+            "\n",
+            "user_first_week as(\n",
+            "  select a.user_id,\n",
+            "         date_diff(current_date()-1, b.install_date,day) days_since_install,\n",
+            "         b.install_date,\n",
+            "         count(a.date) active_days,\n",
+            "         max(ifnull(d.eop_island,1)) eop_island,\n",
+            "         sum(ifnull(e.t_ad_view_2,0)) t_ads,\n",
+            "         sum(ifnull(d.t_out_of_steps_soft,0)) t_out_of_steps_soft,\n",
+            "         sum(ifnull(e.purchases_revenue_usd,0)*0.7) purchases_net_usd,\n",
+            "         sum(ifnull(e.ads_revenue_usd,0)) ads_net_usd,\n",
+            "         if(max(ifnull(d.fb_ind,0))=0,'no_FB_connection','FB_connection') is_fb_ind,\n",
+            "         sum(ifnull(e.t_purchases,0)) t_offers_RM_purchase_count,\n",
+            "         sum(if(ifnull(a.t_steps,0)=0,0,a.t_steps_auto/a.t_steps)) auto_step_ratio,\n",
+            "\n",
+            "         sum(ifnull(a.t_offers_purchased_canceled,0)) t_offers_purchased_canceled,\n",
+            "         sum(ifnull(a.t_offers_soft_purchase_count,0)) t_offers_soft_purchase_count,\n",
+            "         max(ifnull(a.max_step_daily_bet,0)) max_bet,\n",
+            "         sum(ifnull(a.t_guessing_start,0)) t_guessing_start,\n",
+            "         max(ifnull(a.avg_rateus_response,0)) rateus_response,\n",
+            "         sum(ifnull(a.t_pinata_completed,0)) t_pinata_completed,\n",
+            "         sum(ifnull(a.t_set_completed,0)) t_set_completed,\n",
+            "         sum(ifnull(a.t_session,0)) t_session,\n",
+            "\n",
+            "\n",
+            "\n",
+            "  from `panoply-c8c-4908bf4d5f07.ak_agg_tables.daily_user` a\n",
+            "  join `panoply-c8c-4908bf4d5f07.ak_agg_tables.users_singular` b on a.user_id=b.user_id\n",
+            "                                                                 and a.date=b.install_date\n",
+            "  left join `panoply-c8c-4908bf4d5f07.ak_agg_tables.daily_user` d on a.user_id=d.user_id\n",
+            "                                                                  and date_diff(d.date,a.date,day) between 0 and 7\n",
+            "  join `panoply-c8c-4908bf4d5f07.ak_agg_tables.daily_user_singular` e on a.user_id=e.user_id\n",
+            "                                                                    and d.date=e.date\n",
+            "  where 1=1 \n",
+            "  and a.date >= '2022-05-01'   \n",
+            "  group by 1,2,3\n",
+            "),\n",
+            "\n",
+            "user_avg_bet as(\n",
+            "select user_id, sum(avg_step_daily_bet) avg_step_daily_bet\n",
+            "from(\n",
+            "select a.user_id,\n",
+            "       case when ifnull(avg_step_daily_bet,0)=0 then 0 \n",
+            "            else  b.avg_step_daily_bet * (t_steps/sum(t_steps) over (partition by a.user_id)) end avg_step_daily_bet\n",
+            "from user_first_week a\n",
+            "  left join `panoply-c8c-4908bf4d5f07.ak_agg_tables.daily_user` b on a.user_id=b.user_id\n",
+            "                                                                  and date_diff(b.date,a.install_date,day) between 0 and 7\n",
+            ")\n",
+            "group by 1\n",
+            "),\n",
+            "\n",
+            "user_play_time as(\n",
+            "select a.user_id,\n",
+            "       sum(ifnull(session_elapsed_time,0)/1000/60/60) hours_played\n",
+            "from user_first_week a\n",
+            "  left join `panoply-c8c-4908bf4d5f07.ak_agg_tables.sessions` b on a.user_id=b.user_id\n",
+            "                                                                  and date_diff(b.date,a.install_date,day) between 0 and 7\n",
+            "group by 1\n",
+            ")\n",
+            "\n",
+            "-- select minutes_played\n",
+            "-- from user_play_time\n",
+            "-- order by 1 desc\n",
+            "\n",
+            "\n",
+            "\n",
+            "\n",
+            "\n",
+            "\n",
+            "select a.*,\n",
+            "        case when b.platform='Android' then \n",
+            "                                 case when split(b.install_device_os,' ')[offset(2)] like '%.%' then concat('Android_',split(split(b.install_device_os,' ')[offset(2)],'.')[offset(0)] )\n",
+            "                                 else concat('Android_',split(b.install_device_os,' ')[offset(2)]) end\n",
+            "            when b.platform ='IPhonePlayer' or b.platform='OSXEditor' then \n",
+            "                                                                  case when lower(b.install_device_os) like 'ipad%' or lower(b.install_device_os) like 'mac%' then 'iPad_Mac_Windows'\n",
+            "                                                                        when split(b.install_device_os,'.')[offset(0)]='iPhone OS 9' then 'iOS 12'\n",
+            "                                                                        when split(b.install_device_os,'.')[offset(0)] in ('iOS 11','iOS 12','iOS 13','iOS 14','iPhone OS 9') then 'iOS 14'\n",
+            "                                                                        else split(b.install_device_os,'.')[offset(0)] end\n",
+            "            when b.platform ='WindowsEditor' then 'iPad_Mac_Windows' \n",
+            "            else b.install_device_os end install_device_os,\n",
+            "\n",
+            "\n",
+            "            case when b.install_device like '%iPhone%' then\n",
+            "                                            case \n",
+            "                                                 when (b.install_device like '%12%' or b.install_device like '%11%' or b.install_device like '%13%' or b.install_device like '%14%') \n",
+            "                                                 and b.install_device like '%Pro%' then 'iPhone 11_12_13_14 Pro'\n",
+            "                                                 when (b.install_device like '%12' or b.install_device like '%11' or b.install_device like '%13' or b.install_device like '%14')  then 'iPhone 11_12_13_14'\n",
+            "                                            else 'Iphone other' end\n",
+            "\n",
+            "            when b.install_device like 'iPad%' or b.install_device like 'MacBookPro%' or b.install_device like 'iPod%' then 'iPad_iPod_Mac' \n",
+            "            when b.install_device like 'samsung%' then 'samsung' \n",
+            "            when b.install_device like 'motorola%' then 'motorola' \n",
+            "            when b.install_device like 'Xiaomi%' then 'Xiaomi' \n",
+            "            when b.install_device like 'HUAWEI%' then 'HUAWEI' \n",
+            "            else 'unknown' end install_device,\n",
+            "\n",
+            "      case when lower(c.partner) like '%ironsource%' then if(lower(campaign_name) like '%cpe%','CPE Partners','ironSource_without_CPE')\n",
+            "            when  lower(partner)='organic' then 'Organic'\n",
+            "            when  lower(c.partner) like '%unity%' then 'Unity Ads'\n",
+            "            when  lower(c.partner) like '%facebook%' then 'Facebook'\n",
+            "            when  lower(c.partner) like '%unattributed%' then 'Facebook'\n",
+            "            -- when  lower(c.partner) like '%tiktok%' then 'Tiktok'\n",
+            "            when  lower(c.partner) like '%google%' then 'Google'\n",
+            "            when  lower(c.partner) like '%apple%' then 'Apple Search Ads'\n",
+            "            when  lower(c.partner) like '%ios%' then 'Apple Search Ads'\n",
+            "            when  lower(c.partner) in('prodege','tapjoy','exmox','adaction interactive cpe')  then 'CPE Partners'\n",
+            "            when c.partner is null then 'Not In Singular' \n",
+            "            when  lower(c.partner) like '%adaction%'  then 'AdAction'\n",
+            "            when lower(c.partner)='applovin' then 'Applovin'\n",
+            "            else 'Other Partners' end  partner,\n",
+            "\n",
+            "\n",
+            "        case when upper(if(b.country_code is null or b.country_code='0' ,c.country_code,b.country_code)) in('US','GB','DE','CA','AU','FR','RO','CZ','SA','PL','HU','DK','AT') \n",
+            "                        then upper(if(b.country_code is null or b.country_code='0' ,c.country_code,b.country_code))\n",
+            "             when upper(if(b.country_code is null or b.country_code='0' ,c.country_code,b.country_code)) in ('MX','IL','AF','PH') then 'IL_MX_PH_PH'\n",
+            "             else 'Other' end country_code,\n",
+            "\n",
+            "       if(avg_step_daily_bet>=100,100,avg_step_daily_bet) avg_step_daily_bet,\n",
+            "       if(hours_played>=16,116,hours_played) hours_played,\n",
+            "       if(t_offers_soft_purchase_count=0,0,purchases_net_usd/t_offers_soft_purchase_count) avg_purchas,\n",
+            "       if(ads_net_usd=0,0,ads_net_usd/t_ads*1000) ads_cpm,\n",
+            "       c.LTV_ads_day_90 +0.7*c.LTV_iap_gross_day_90 LTV_net_day_90,\n",
+            "-- select a.eop_island,count\n",
+            "from user_first_week a\n",
+            "join `panoply-c8c-4908bf4d5f07.ak_agg_tables.users` b on a.user_id=b.user_id\n",
+            "join `panoply-c8c-4908bf4d5f07.ak_agg_tables.users_singular` c on a.user_id=c.user_id\n",
+            "join user_avg_bet d on a.user_id=d.user_id\n",
+            "join user_play_time e on a.user_id=e.user_id\n",
+            "where 1=1 \n",
+            "--c.LTV_ads_day_90 +0.7*c.LTV_iap_gross_day_90>0\n",
+            "--and a.active_days>1\n",
+            "--and upper(if(b.country_code is null or b.country_code='0' ,c.country_code,b.country_code)) not in ('MX','IL','AF','PH')\n",
+            "-- and purchases_net_usd>0\n",
+            "\n",
+            "\n"
+          ]
+        }
+      ],
+      "source": [
+        "# Running this code will display the query used to generate your previous job\n",
+        "\n",
+        "job = client.get_job('bquxjob_38fd8039_185786cd0f1') # Job ID inserted based on the query results selected to explore\n",
+        "print(job.query)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "eY-wNOGO11ON"
+      },
+      "source": [
+        "# Result set loaded from BigQuery job as a DataFrame\n",
+        "Query results are referenced from the Job ID ran from BigQuery and the query\n",
+        "does not need to be re-run to explore results. The ```to_dataframe```\n",
+        "[method](https://googleapis.dev/python/bigquery/latest/generated/google.cloud.bigquery.job.QueryJob.html#google.cloud.bigquery.job.QueryJob.to_dataframe)\n",
+        "downloads the results to a Pandas DataFrame by using the BigQuery Storage API.\n",
+        "\n",
+        "To edit query syntax, you can do so from the BigQuery SQL editor or in the\n",
+        "```Optional:``` sections below."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 48,
+      "metadata": {
+        "id": "bIw82qhuHWy0"
+      },
+      "outputs": [],
+      "source": [
+        "# Running this code will read results from your previous job\n",
+        "\n",
+        "job = client.get_job('bquxjob_38fd8039_185786cd0f1') # Job ID inserted based on the query results selected to explore\n",
+        "results = job.to_dataframe()\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import pandas as pd\n",
+        "import numpy as np\n",
+        "from scipy.stats import skew\n",
+        "from IPython.display import display\n",
+        "import matplotlib.pyplot as plt\n",
+        "import seaborn as sns\n",
+        "\n",
+        "\n",
+        "from sklearn.model_selection import cross_val_score, train_test_split\n",
+        "from sklearn.preprocessing import StandardScaler\n",
+        "from sklearn.linear_model import LinearRegression, RidgeCV, LassoCV, ElasticNetCV\n",
+        "from sklearn.metrics import mean_squared_error, make_scorer\n",
+        "from sklearn.linear_model import ElasticNet, Lasso,  BayesianRidge, LassoLarsIC\n",
+        "from sklearn.ensemble import RandomForestRegressor,  GradientBoostingRegressor\n",
+        "from sklearn.kernel_ridge import KernelRidge\n",
+        "from sklearn.pipeline import make_pipeline\n",
+        "from sklearn.preprocessing import RobustScaler\n",
+        "from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin, clone\n",
+        "from sklearn.model_selection import KFold, cross_val_score, train_test_split\n",
+        "from sklearn.ensemble import RandomForestRegressor\n",
+        "from sklearn import metrics\n",
+        "\n",
+        "\n",
+        "import xgboost as xgb\n",
+        "import lightgbm as lgb\n",
+        "from sklearn.model_selection import GridSearchCV"
+      ],
+      "metadata": {
+        "id": "qe0GUJ1vceN2"
+      },
+      "execution_count": 49,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 50,
+      "metadata": {
+        "id": "fsAsHoWDZMpv"
+      },
+      "outputs": [],
+      "source": [
+        "# IQR remove outliers\n",
+        "def remove_outliers(data):\n",
+        "  Q1 = np.percentile(data['LTV_net_day_90'], 25) \n",
+        "  Q3 = np.percentile(data['LTV_net_day_90'], 75)\n",
+        "  IQR = Q3 - Q1\n",
+        "  upper = Q3 +1.5*IQR\n",
+        "  print(upper)\n",
+        "  data=data[data.LTV_net_day_90<=upper]\n",
+        "  return data\n",
+        "\n",
+        "\n",
+        "def data_manipulation(x):\n",
+        "  df_payers=x.copy()\n",
+        "\n",
+        "  # df_payers = df_payers.drop('user_id',axis=1)\n",
+        "  df_payers = df_payers.drop('install_date',axis=1)\n",
+        "\n",
+        "  # Create new features\n",
+        "  # 3* Polynomials on the top 10 existing features\n",
+        "  df_payers[\"purchases_net_usd-s2\"] = df_payers[\"purchases_net_usd\"] ** 2\n",
+        "  df_payers[\"purchases_net_usd-s3\"] = df_payers[\"purchases_net_usd\"] ** 3\n",
+        "  df_payers[\"purchases_net_usd-Sq\"] = np.sqrt(df_payers[\"purchases_net_usd\"])\n",
+        "  df_payers[\"t_offers_RM_purchase_count-2\"] = df_payers[\"t_offers_RM_purchase_count\"] ** 2\n",
+        "  df_payers[\"t_offers_RM_purchase_count-3\"] = df_payers[\"t_offers_RM_purchase_count\"] ** 3\n",
+        "  df_payers[\"t_offers_RM_purchase_count-Sq\"] = np.sqrt(df_payers[\"t_offers_RM_purchase_count\"])\n",
+        "  df_payers[\"eop_island-2\"] = df_payers[\"eop_island\"] ** 2\n",
+        "  df_payers[\"eop_island-3\"] = df_payers[\"eop_island\"] ** 3\n",
+        "  df_payers[\"eop_island-Sq\"] = np.sqrt(df_payers[\"eop_island\"])\n",
+        "  df_payers[\"ads_net_usd-2\"] = df_payers[\"ads_net_usd\"] ** 2\n",
+        "  df_payers[\"ads_net_usd-3\"] = df_payers[\"ads_net_usd\"] ** 3\n",
+        "  df_payers[\"ads_net_usd-Sq\"] = np.sqrt(df_payers[\"ads_net_usd\"])\n",
+        "\n",
+        "  # Differentiate numerical features (minus the target) and categorical features\n",
+        "  categorical_features = df_payers.select_dtypes(include = [\"object\"]).columns\n",
+        "  numerical_features = df_payers.select_dtypes(exclude = [\"object\"]).columns\n",
+        "  numerical_features = numerical_features.drop(\"LTV_net_day_90\")\n",
+        "  print(\"Numerical features : \" + str(len(numerical_features)))\n",
+        "  print(\"Categorical features : \" + str(len(categorical_features)))\n",
+        "  df_payers_num = df_payers[numerical_features]\n",
+        "  df_payers_cat = df_payers[categorical_features]\n",
+        "\n",
+        "# Log transform of the skewed numerical features to lessen impact of outliers\n",
+        "# Inspired by Alexandru Papiu's script : https://www.kaggle.com/apapiu/house-prices-advanced-regression-techniques/regularized-linear-models\n",
+        "# As a general rule of thumb, a skewness with an absolute value > 0.5 is considered at least moderately skewed\n",
+        "  skewness = df_payers_num.apply(lambda x: skew(x))\n",
+        "  skewness = skewness[abs(skewness) > 0.5]\n",
+        "  print(str(skewness.shape[0]) + \" skewed numerical features to log transform\")\n",
+        "  skewed_features = skewness.index\n",
+        "  df_payers_num[skewed_features] = np.log1p(df_payers_num[skewed_features])\n",
+        "\n",
+        "  # Create dummy features for categorical values via one-hot encoding\n",
+        "  print(\"NAs for categorical features in df : \" + str(df_payers_cat.isnull().values.sum()))\n",
+        "  df_payers_cat = pd.get_dummies(df_payers_cat)\n",
+        "  print(\"Remaining NAs for categorical features in df : \" + str(df_payers_cat.isnull().values.sum()))\n",
+        "\n",
+        "  # Standardize numerical features\n",
+        "  stdSc = StandardScaler()\n",
+        "  df_payers_num.loc[:, numerical_features] = stdSc.fit_transform(df_payers_num.loc[:, numerical_features])\n",
+        "\n",
+        "\n",
+        "  # Join categorical and numerical features\n",
+        "  df_payers_x = pd.concat([df_payers_num, df_payers_cat], axis = 1)\n",
+        "  y=df_payers['LTV_net_day_90']\n",
+        "  print(\"New number of features : \" + str(df_payers_x.shape[1]))\n",
+        "\n",
+        "  return df_payers_x,y\n",
+        "\n",
+        "model_lgb = lgb.LGBMRegressor(objective='regression',num_leaves=5,\n",
+        "                              learning_rate=0.05, n_estimators=720,\n",
+        "                              max_bin = 55, bagging_fraction = 0.8,\n",
+        "                              bagging_freq = 5, feature_fraction = 0.2319,\n",
+        "                              feature_fraction_seed=9, bagging_seed=9,\n",
+        "                              min_data_in_leaf =6, min_sum_hessian_in_leaf = 11)\n",
+        "\n",
+        "model_lgb2 = lgb.LGBMRegressor(objective='regression',num_leaves=5,\n",
+        "                              learning_rate=0.05, n_estimators=720,\n",
+        "                              max_bin = 55, bagging_fraction = 0.8,\n",
+        "                              bagging_freq = 5, feature_fraction = 0.2319,\n",
+        "                              feature_fraction_seed=9, bagging_seed=9,\n",
+        "                              min_data_in_leaf =6, min_sum_hessian_in_leaf = 11)\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "one_active_day_df=results[results.active_days==1]\n",
+        "results=results[results.active_days>1]\n",
+        "train_df=results[results.days_since_install>=90]"
+      ],
+      "metadata": {
+        "id": "zYsKD__2aRlz"
+      },
+      "execution_count": 51,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "df_payers=train_df[train_df.purchases_net_usd>0]\n",
+        "df_not_payers=train_df[train_df.purchases_net_usd==0]\n",
+        "df_not_payers.set_index('user_id', inplace=True)\n",
+        "df_payers.set_index('user_id', inplace=True)\n",
+        "\n",
+        "# df_payers=remove_outliers(df_payers)\n",
+        "# df_not_payers=remove_outliers(df_not_payers)\n",
+        "\n",
+        "\n"
+      ],
+      "metadata": {
+        "id": "tlHaaBcLd3iZ"
+      },
+      "execution_count": 52,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "x_payers,y_payers=data_manipulation(df_payers)\n",
+        "x_not_payers,y_not_payers=data_manipulation(df_not_payers)\n"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "gKUUxeVNf0rT",
+        "outputId": "0f56e824-447b-4560-9d3a-c11296432bd8"
+      },
+      "execution_count": 53,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Numerical features : 33\n",
+            "Categorical features : 5\n",
+            "31 skewed numerical features to log transform\n",
+            "NAs for categorical features in df : 0\n",
+            "Remaining NAs for categorical features in df : 0\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "/usr/local/lib/python3.8/dist-packages/pandas/core/frame.py:3641: SettingWithCopyWarning: \n",
+            "A value is trying to be set on a copy of a slice from a DataFrame.\n",
+            "Try using .loc[row_indexer,col_indexer] = value instead\n",
+            "\n",
+            "See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy\n",
+            "  self[k1] = value[k2]\n",
+            "/usr/local/lib/python3.8/dist-packages/pandas/core/indexing.py:1835: SettingWithCopyWarning: \n",
+            "A value is trying to be set on a copy of a slice from a DataFrame.\n",
+            "Try using .loc[row_indexer,col_indexer] = value instead\n",
+            "\n",
+            "See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy\n",
+            "  self._setitem_single_column(loc, value[:, i].tolist(), pi)\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "New number of features : 81\n",
+            "Numerical features : 33\n",
+            "Categorical features : 5\n",
+            "27 skewed numerical features to log transform\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "/usr/local/lib/python3.8/dist-packages/pandas/core/frame.py:3641: SettingWithCopyWarning: \n",
+            "A value is trying to be set on a copy of a slice from a DataFrame.\n",
+            "Try using .loc[row_indexer,col_indexer] = value instead\n",
+            "\n",
+            "See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy\n",
+            "  self[k1] = value[k2]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "NAs for categorical features in df : 0\n",
+            "Remaining NAs for categorical features in df : 0\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "/usr/local/lib/python3.8/dist-packages/pandas/core/indexing.py:1835: SettingWithCopyWarning: \n",
+            "A value is trying to be set on a copy of a slice from a DataFrame.\n",
+            "Try using .loc[row_indexer,col_indexer] = value instead\n",
+            "\n",
+            "See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy\n",
+            "  self._setitem_single_column(loc, value[:, i].tolist(), pi)\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "New number of features : 81\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "\n",
+        "payers_model=model_lgb.fit(x_payers, y_payers)\n",
+        "y_payers_pred = payers_model.predict(x_payers)\n",
+        "# Look at predictions on training and validation set\n",
+        "print('RMSE:', np.sqrt(metrics.mean_squared_error(y_payers, y_payers_pred)))\n",
+        "\n",
+        "\n",
+        "\n",
+        "non_payers_model=model_lgb2.fit(x_not_payers, y_not_payers)\n",
+        "y_not_ayers_pred = non_payers_model.predict(x_not_payers)\n",
+        "# Look at predictions on training and validation set\n",
+        "print('RMSE:', np.sqrt(metrics.mean_squared_error(y_not_payers, y_not_ayers_pred)))\n"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "HACErn0Ni7a9",
+        "outputId": "da37d2a3-5717-4e36-9673-03d8e28cccf7"
+      },
+      "execution_count": 54,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "RMSE: 79.96618898702387\n",
+            "RMSE: 15.6628261151722\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "model_payers_featurs=x_payers.columns\n",
+        "model_not_payers_featurs=x_not_payers.columns"
+      ],
+      "metadata": {
+        "id": "HzJiWl78Wr2Y"
+      },
+      "execution_count": 55,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "df_payers=results[results.purchases_net_usd>0]\n",
+        "df_not_payers=results[results.purchases_net_usd==0]\n",
+        "df_not_payers.set_index('user_id', inplace=True)\n",
+        "df_payers.set_index('user_id', inplace=True)\n",
+        "\n",
+        "x_payers,y_payers=data_manipulation(df_payers)\n",
+        "x_not_payers,y_not_payers=data_manipulation(df_not_payers)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "VbYqClzappFH",
+        "outputId": "d4e45909-9b13-495e-cafc-da0b28cff038"
+      },
+      "execution_count": 56,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Numerical features : 33\n",
+            "Categorical features : 5\n",
+            "31 skewed numerical features to log transform\n",
+            "NAs for categorical features in df : 0\n",
+            "Remaining NAs for categorical features in df : 0\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "/usr/local/lib/python3.8/dist-packages/pandas/core/frame.py:3641: SettingWithCopyWarning: \n",
+            "A value is trying to be set on a copy of a slice from a DataFrame.\n",
+            "Try using .loc[row_indexer,col_indexer] = value instead\n",
+            "\n",
+            "See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy\n",
+            "  self[k1] = value[k2]\n",
+            "/usr/local/lib/python3.8/dist-packages/pandas/core/indexing.py:1835: SettingWithCopyWarning: \n",
+            "A value is trying to be set on a copy of a slice from a DataFrame.\n",
+            "Try using .loc[row_indexer,col_indexer] = value instead\n",
+            "\n",
+            "See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy\n",
+            "  self._setitem_single_column(loc, value[:, i].tolist(), pi)\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "New number of features : 82\n",
+            "Numerical features : 33\n",
+            "Categorical features : 5\n",
+            "27 skewed numerical features to log transform\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "/usr/local/lib/python3.8/dist-packages/pandas/core/frame.py:3641: SettingWithCopyWarning: \n",
+            "A value is trying to be set on a copy of a slice from a DataFrame.\n",
+            "Try using .loc[row_indexer,col_indexer] = value instead\n",
+            "\n",
+            "See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy\n",
+            "  self[k1] = value[k2]\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "NAs for categorical features in df : 0\n",
+            "Remaining NAs for categorical features in df : 0\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "/usr/local/lib/python3.8/dist-packages/pandas/core/indexing.py:1835: SettingWithCopyWarning: \n",
+            "A value is trying to be set on a copy of a slice from a DataFrame.\n",
+            "Try using .loc[row_indexer,col_indexer] = value instead\n",
+            "\n",
+            "See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy\n",
+            "  self._setitem_single_column(loc, value[:, i].tolist(), pi)\n"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "New number of features : 82\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "model_payers_featurs_new=x_payers.columns\n",
+        "columns_to_deop = list(set(model_payers_featurs_new) - set(model_payers_featurs))\n",
+        "x_payers = x_payers.drop(columns=columns_to_deop,axis=1)\n",
+        "\n",
+        "model_not_payers_featurs_new=x_not_payers.columns\n",
+        "columns_to_deop2 = list(set(model_not_payers_featurs_new) - set(model_not_payers_featurs))\n",
+        "x_not_payers = x_not_payers.drop(columns=columns_to_deop2,axis=1)"
+      ],
+      "metadata": {
+        "id": "IK7xCAtuX6NO"
+      },
+      "execution_count": 57,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "y_payers_pred = payers_model.predict(x_payers)\n",
+        "x_payers['LTV_day_90_pred']=y_payers_pred\n",
+        "y_not_payers_pred = non_payers_model.predict(x_not_payers)\n",
+        "x_not_payers['LTV_day_90_pred']=y_not_payers_pred\n"
+      ],
+      "metadata": {
+        "id": "Gj75E3k8Uhq7"
+      },
+      "execution_count": 58,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "x_payers['user_id']=x_payers.index\n",
+        "x_payers=x_payers[['user_id','LTV_day_90_pred']]\n",
+        "x_not_payers['user_id']=x_not_payers.index\n",
+        "x_not_payers=x_not_payers[['user_id','LTV_day_90_pred']]\n",
+        "\n",
+        "one_active_day_df['LTV_day_90_pred']=one_active_day_df.purchases_net_usd+one_active_day_df.ads_net_usd\n",
+        "one_active_day_df=one_active_day_df[['user_id','LTV_day_90_pred']]\n",
+        "\n"
+      ],
+      "metadata": {
+        "id": "oMJFngM1Wf1E"
+      },
+      "execution_count": 59,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "final_df=pd.concat([x_payers,x_not_payers, one_active_day_df])\n",
+        "final_df.shape"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "TuMxppFufJTF",
+        "outputId": "6fcb75cf-6737-4636-e909-eefa21a1a9f2"
+      },
+      "execution_count": 60,
+      "outputs": [
+        {
+          "output_type": "execute_result",
+          "data": {
+            "text/plain": [
+              "(1733818, 2)"
+            ]
+          },
+          "metadata": {},
+          "execution_count": 60
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "x_payers.LTV_day_90_pred.mean()"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "oMfiLJ8q-ekc",
+        "outputId": "85b07a05-081b-4b00-a817-edfb1f328449"
+      },
+      "execution_count": 61,
+      "outputs": [
+        {
+          "output_type": "execute_result",
+          "data": {
+            "text/plain": [
+              "45.20169125248057"
+            ]
+          },
+          "metadata": {},
+          "execution_count": 61
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "from google.oauth2.service_account import Credentials\n",
+        "\n",
+        "\n",
+        "# Define target table in BQ\n",
+        "target_table = 'python.LTV_day_90_pred'\n",
+        "project_id='panoply-c8c-4908bf4d5f07'\n",
+        "credential_file = \"/Users/danielraz/Documents/service-account-key.json\"\n",
+        "# credential = Credentials.from_service_account_file(credential_file)\n",
+        "# Location for BQ job, it needs to match with destination table location\n",
+        "\n",
+        "final_df.to_gbq(target_table, project_id=project_id, if_exists='replace',progress_bar=True)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "H_PLH0bEgqD3",
+        "outputId": "a2fdacff-450f-4522-f753-fe04577de8ec"
+      },
+      "execution_count": 62,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "100%|██████████| 1/1 [00:00<00:00, 7854.50it/s]\n"
+          ]
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "colab": {
+      "cell_execution_strategy": "setup",
+      "name": "BigQuery bquxjob_426efa91_185772b342e",
+      "provenance": [],
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "display_name": "Python 3",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 0
+}
